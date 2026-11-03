@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kolkata Residential Project Map</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: Arial, sans-serif;
+}
+
+#controls {
+    padding: 10px;
+    background: #f5f5f5;
+    border-bottom: 1px solid #ccc;
+}
+
+#map {
+    width: 100%;
+    height: calc(100vh - 60px);
+}
+
+.legend {
+    background: white;
+    padding: 10px;
+    border-radius: 5px;
+    line-height: 1.6;
+    box-shadow: 0 0 10px rgba(0,0,0,.3);
+}
+
+#status {
+    margin-left: 10px;
+    color: green;
+    font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+
+<div id="controls">
+    <input type="file" id="csvFile" accept=".csv">
+    <span id="status">Select output.csv</span>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+
+// Create map
+const map = L.map('map').setView([22.62, 88.40], 10);
+
+// Satellite base map
+L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {
+        attribution: 'Esri'
+    }
+).addTo(map);
+
+let markersLayer = L.layerGroup().addTo(map);
+
+// Color function
+function getColor(priceText)
+{
+    if (!priceText || priceText === "" || priceText === "N.A.")
+        return "#808080";
+
+    let match = priceText.match(/[\d.]+/);
+
+    if (!match)
+        return "#808080";
+
+    let price = parseFloat(match[0]);
+
+    if (price <= 40) return "#00A651";
+    if (price <= 60) return "#FFD700";
+    if (price <= 80) return "#FF8C00";
+
+    return "#DC143C";
+}
+
+// CSV Parser
+function parseCSV(text)
+{
+    const rows = [];
+    const lines = text.trim().split(/\r?\n/);
+
+    for (let line of lines)
+    {
+        let row = [];
+        let current = "";
+        let insideQuotes = false;
+
+        for (let i = 0; i < line.length; i++)
+        {
+            let char = line[i];
+
+            if (char === '"')
+            {
+                insideQuotes = !insideQuotes;
+            }
+            else if (char === ',' && !insideQuotes)
+            {
+                row.push(current.trim());
+                current = "";
+            }
+            else
+            {
+                current += char;
+            }
+        }
+
+        row.push(current.trim());
+        rows.push(row);
+    }
+
+    return rows;
+}
+
+// Load Projects
+function loadProjects(csvText)
+{
+    markersLayer.clearLayers();
+
+    const rows = parseCSV(csvText);
+
+    if (rows.length < 2)
+    {
+        alert("CSV appears empty.");
+        return;
+    }
+
+    const headers = rows[0];
+
+    const idxName = headers.indexOf("Name of Project");
+    const idxLocation = headers.indexOf("Location");
+    const idx2BHK = headers.indexOf("Price (2BHK)");
+    const idx3BHK = headers.indexOf("Price (3BHK)");
+    const idx4BHK = headers.indexOf("Price (4BHK)");
+    const idxLatLong = headers.indexOf("Lat-Long");
+
+    let markerCount = 0;
+    let bounds = [];
+
+    rows.slice(1).forEach(row =>
+    {
+        if (!row[idxLatLong])
+            return;
+
+        const coords = row[idxLatLong].split(",");
+
+        if (coords.length < 2)
+            return;
+
+        const lat = parseFloat(coords[0]);
+        const lng = parseFloat(coords[1]);
+
+        if (isNaN(lat) || isNaN(lng))
+            return;
+
+        let project = row[idxName] || "";
+        let location = row[idxLocation] || "";
+
+        let bhk2 = row[idx2BHK] || "N.A.";
+        let bhk3 = row[idx3BHK] || "N.A.";
+        let bhk4 = row[idx4BHK] || "N.A.";
+
+        const marker = L.circleMarker(
+            [lat, lng],
+            {
+                radius: 8,
+                fillColor: getColor(bhk2),
+                color: "#000",
+                weight: 1,
+                fillOpacity: 0.8
+            }
+        );
+
+        marker.bindPopup(`
+            <b>${project}</b><br>
+            <b>Location:</b> ${location}<br>
+            <b>2BHK:</b> ${bhk2}<br>
+            <b>3BHK:</b> ${bhk3}<br>
+            <b>4BHK:</b> ${bhk4}
+        `);
+
+        marker.addTo(markersLayer);
+
+        bounds.push([lat,lng]);
+
+        markerCount++;
+    });
+
+    if (bounds.length > 0)
+    {
+        map.fitBounds(bounds);
+    }
+
+    document.getElementById("status").innerHTML =
+        markerCount + " projects loaded";
+}
+
+// File picker
+document.getElementById("csvFile").addEventListener("change", function(e)
+{
+    const file = e.target.files[0];
+
+    if (!file)
+        return;
+
+    const reader = new FileReader();
+
+    reader.onload = function(event)
+    {
+        try
+        {
+            loadProjects(event.target.result);
+        }
+        catch(error)
+        {
+            console.error(error);
+            alert("Error reading CSV");
+        }
+    };
+
+    reader.readAsText(file);
+});
+
+// Legend
+const legend = L.control({position:'bottomright'});
+
+legend.onAdd = function()
+{
+    const div = L.DomUtil.create('div','legend');
+
+    div.innerHTML =
+        "<b>2BHK Pricing</b><br>" +
+        "<span style='color:#00A651'>●</span> ≤ ₹40 L<br>" +
+        "<span style='color:#FFD700'>●</span> ₹40-60 L<br>" +
+        "<span style='color:#FF8C00'>●</span> ₹60-80 L<br>" +
+        "<span style='color:#DC143C'>●</span> > ₹80 L<br>" +
+        "<span style='color:#808080'>●</span> N.A.";
+
+    return div;
+};
+
+legend.addTo(map);
+
+</script>
+
+</body>
+</html>
